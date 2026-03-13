@@ -7,18 +7,6 @@
 //   MINIO_ACCESS_KEY → Access Key do MinIO
 //   MINIO_SECRET_KEY → Secret Key do MinIO
 
-export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
-  if (request.method === "OPTIONS") {
-    return new Response(null, { status: 204, headers: CORS_HEADERS });
-  }
-  if (request.method !== "PUT") {
-    return new Response(JSON.stringify({ error: "Método não permitido." }), {
-      status: 405,
-      headers: { "Content-Type": "application/json", ...CORS_HEADERS },
-    });
-  }
-  // ... resto do código
-
 interface Env {
   MINIO_ACCESS_KEY: string;
   MINIO_SECRET_KEY: string;
@@ -70,10 +58,10 @@ async function signedPutHeaders(
   body: ArrayBuffer,
   contentType: string
 ): Promise<Headers> {
-  const now        = new Date();
-  const datestamp  = now.toISOString().slice(0, 10).replace(/-/g, "");
-  const amzdate    = now.toISOString().replace(/[:-]|\.\d{3}/g, "").slice(0, 15) + "Z";
-  const host       = new URL(MINIO_ENDPOINT).hostname;
+  const now         = new Date();
+  const datestamp   = now.toISOString().slice(0, 10).replace(/-/g, "");
+  const amzdate     = now.toISOString().replace(/[:-]|\.\d{3}/g, "").slice(0, 15) + "Z";
+  const host        = new URL(MINIO_ENDPOINT).hostname;
   const payloadHash = await sha256buf(body);
 
   const canonicalHeaders = `content-type:${contentType}\nhost:${host}\nx-amz-content-sha256:${payloadHash}\nx-amz-date:${amzdate}\n`;
@@ -109,11 +97,20 @@ async function signedPutHeaders(
   return headers;
 }
 
-export const onRequestOptions: PagesFunction = async () => {
-  return new Response(null, { status: 204, headers: CORS_HEADERS });
-};
-
 export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
+  // CORS preflight
+  if (request.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: CORS_HEADERS });
+  }
+
+  // Só aceita PUT
+  if (request.method !== "PUT") {
+    return new Response(
+      JSON.stringify({ error: "Método não permitido." }),
+      { status: 405, headers: { "Content-Type": "application/json", ...CORS_HEADERS } }
+    );
+  }
+
   if (!env.MINIO_ACCESS_KEY || !env.MINIO_SECRET_KEY) {
     return new Response(
       JSON.stringify({ error: "Credenciais do MinIO não configuradas." }),
