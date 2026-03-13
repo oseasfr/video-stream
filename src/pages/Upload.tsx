@@ -1,11 +1,11 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { Upload, Film, CheckCircle2, AlertCircle, X, Loader2, Copy, Tv, Lock } from "lucide-react";
 import { Link } from "react-router-dom";
 import NavBar from "@/components/NavBar";
+import { STREAM_URL } from "@/config/stream";
+import { UPLOAD_URL, VERIFY_PASSWORD_URL } from "@/config/api";
 
 const ACCEPTED_TYPES = ["video/mp4", "video/webm", "video/quicktime", "video/x-msvideo", "video/avi"];
-
-const STREAM_URL = "https://5be6bb6f.video-stream-7m7.pages.dev/tv";
 
 type UploadState = "idle" | "validating" | "confirm" | "uploading" | "success" | "error";
 
@@ -36,9 +36,18 @@ const UploadPage = () => {
     setError("");
     setState("validating");
     const err = validate(file);
-    if (err) { setError(err); setState("error"); return; }
-    const preview = URL.createObjectURL(file);
-    setVideoFile({ file, preview, size: formatBytes(file.size) });
+    if (err) {
+      setError(err);
+      setState("error");
+      return;
+    }
+
+    // libera preview antigo para evitar vazamento
+    setVideoFile((prev) => {
+      if (prev?.preview) URL.revokeObjectURL(prev.preview);
+      return { file, preview: URL.createObjectURL(file), size: formatBytes(file.size) };
+    });
+
     setState("idle");
   }, []);
 
@@ -55,77 +64,95 @@ const UploadPage = () => {
     setAuthError("");
   };
 
-  const submitUpload = async () => {
-    setAuthError("");
+  const uploadWithProgress = (file: File, passwordValue: string) => {
+    return new Promise<void>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhrRef.current = xhr;
 
-    // Valida senha
+      xhr.open("POST", UPLOAD_URL);
+
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) {
+          const percent = Math.round((event.loaded / event.total) * 100);
+          setProgress(percent);
+        }
+      };
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          setProgress(100);
+          resolve();
+          return;
+        }
+
+        try {
+          const payload = JSON.parse(xhr.responseText) as { error?: string };
+          reject(new Error(payload.error || `Upload falhou com status ${xhr.status}`));
+        } catch {
+          reject(new Error(`Upload falhou com status ${xhr.status}`));
+        }
+      };
+
+      xhr.onerror = () => reject(new Error("Falha de rede ao enviar o arquivo."));
+      xhr.onabort = () => reject(new Error("Upload cancelado."));
+
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("password", passwordValue);
+      xhr.send(formData);
+    });
+  };
+
+  const submitUpload = async () => {
+    if (!videoFile) {
+      setAuthError("Selecione um vídeo antes de enviar.");
+      return;
+    }
+
+    setAuthError("");
+    setError("");
+
     try {
-      const res = await fetch("/api/verify-password", {
+      const verifyResponse = await fetch(VERIFY_PASSWORD_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ password }),
       });
 
-      if (!res.ok) {
+      if (!verifyResponse.ok) {
         setAuthError("Senha incorreta.");
         return;
       }
-    } catch {
-      console.warn("API /api/verify-password não disponível — modo desenvolvimento");
-    }
 
-    if (!videoFile) return;
+      setState("uploading");
+      setProgress(0);
 
-    setState("uploading");
-    setProgress(0);
-
-    try {
-      // Upload via proxy da Cloudflare Function (sem CORS)
-      await new Promise<void>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        xhrRef.current = xhr;
-
-        xhr.upload.addEventListener("progress", (e) => {
-          if (e.lengthComputable) {
-            setProgress(Math.round((e.loaded / e.total) * 100));
-          }
-        });
-
-        xhr.addEventListener("load", () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            resolve();
-          } else {
-            try {
-              const res = JSON.parse(xhr.responseText);
-              reject(new Error(res.error || `Upload falhou com status ${xhr.status}`));
-            } catch {
-              reject(new Error(`Upload falhou com status ${xhr.status}`));
-            }
-          }
-        });
-
-        xhr.addEventListener("error", () => reject(new Error("Erro de rede durante o upload.")));
-        xhr.addEventListener("abort", () => reject(new Error("Upload cancelado.")));
-
-        xhr.open("PUT", "/api/upload");
-        xhr.setRequestHeader("Content-Type", "video/mp4");
-        xhr.send(videoFile.file);
-      });
-
+      await uploadWithProgress(videoFile.file, password);
       setState("success");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro desconhecido durante o upload.");
+      const message = err instanceof Error ? err.message : "Erro inesperado no upload.";
+      setError(message);
       setState("error");
+    } finally {
+      xhrRef.current = null;
     }
   };
 
   const cancelUpload = () => {
     xhrRef.current?.abort();
-    setState("idle");
+    xhrRef.current = null;
+    setState("confirm");
     setProgress(0);
   };
 
   const reset = () => {
+    xhrRef.current?.abort();
+    xhrRef.current = null;
+
+    if (videoFile?.preview) {
+      URL.revokeObjectURL(videoFile.preview);
+    }
+
     setVideoFile(null);
     setState("idle");
     setProgress(0);
@@ -133,6 +160,15 @@ const UploadPage = () => {
     setPassword("");
     setAuthError("");
   };
+
+  useEffect(() => {
+    return () => {
+      xhrRef.current?.abort();
+      if (videoFile?.preview) {
+        URL.revokeObjectURL(videoFile.preview);
+      }
+    };
+  }, [videoFile]);
 
   const copyUrl = () => {
     navigator.clipboard.writeText(STREAM_URL);
@@ -161,7 +197,6 @@ const UploadPage = () => {
         </div>
 
         <div className="mx-auto max-w-3xl px-6 py-8 space-y-5">
-
           {/* Drop Zone */}
           {!videoFile && state !== "success" && (
             <div
@@ -192,7 +227,7 @@ const UploadPage = () => {
                 <p className="text-sm text-muted-foreground">ou clique para selecionar</p>
               </div>
               <div className="flex gap-2 flex-wrap justify-center">
-                {["MP4", "WebM", "MOV", "AVI"].map(t => (
+                {["MP4", "WebM", "MOV", "AVI"].map((t) => (
                   <span key={t} className="px-2 py-0.5 rounded text-xs bg-secondary text-muted-foreground font-mono">{t}</span>
                 ))}
               </div>
@@ -204,7 +239,7 @@ const UploadPage = () => {
             <div className="flex items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3">
               <AlertCircle className="w-4 h-4 text-destructive shrink-0" />
               <p className="text-sm text-destructive">{error}</p>
-              <button onClick={() => { setError(""); setState("idle"); }} className="ml-auto">
+              <button onClick={() => { setError(""); setState("confirm"); }} className="ml-auto">
                 <X className="w-4 h-4 text-destructive/60 hover:text-destructive" />
               </button>
             </div>
@@ -221,7 +256,7 @@ const UploadPage = () => {
                   const v = e.target as HTMLVideoElement;
                   const m = Math.floor(v.duration / 60);
                   const s = Math.floor(v.duration % 60);
-                  setVideoFile(prev => prev ? { ...prev, duration: `${m}:${s.toString().padStart(2, "0")}` } : prev);
+                  setVideoFile((prev) => prev ? { ...prev, duration: `${m}:${s.toString().padStart(2, "0")}` } : prev);
                 }}
               />
               <div className="p-4 flex items-center justify-between">
