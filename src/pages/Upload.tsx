@@ -25,6 +25,7 @@ const UploadPage = () => {
   const [password, setPassword] = useState("");
   const [authError, setAuthError] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  const xhrRef = useRef<XMLHttpRequest | null>(null);
 
   const validate = (file: File): string | null => {
     if (!ACCEPTED_TYPES.includes(file.type)) return "Tipo inválido. Use MP4, WebM, MOV ou AVI.";
@@ -57,7 +58,7 @@ const UploadPage = () => {
   const submitUpload = async () => {
     setAuthError("");
 
-    // Validate password against server/env
+    // Valida senha
     try {
       const res = await fetch("/api/verify-password", {
         method: "POST",
@@ -70,19 +71,66 @@ const UploadPage = () => {
         return;
       }
     } catch {
-      // If no backend available, allow upload (dev mode)
       console.warn("API /api/verify-password não disponível — modo desenvolvimento");
     }
+
+    if (!videoFile) return;
 
     setState("uploading");
     setProgress(0);
 
-    // Simulate upload — replace with real upload logic (fetch/XHR to your server)
-    for (let i = 0; i <= 100; i += 2) {
-      await new Promise(r => setTimeout(r, 40));
-      setProgress(i);
+    try {
+      // 1. Obtém presigned URL do MinIO
+      const urlRes = await fetch("/api/upload-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+
+      if (!urlRes.ok) {
+        const body = await urlRes.json().catch(() => ({}));
+        throw new Error(body.error || "Erro ao obter URL de upload.");
+      }
+
+      const { url: presignedUrl } = await urlRes.json();
+
+      // 2. Faz upload direto para o MinIO via XHR (para acompanhar progresso)
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhrRef.current = xhr;
+
+        xhr.upload.addEventListener("progress", (e) => {
+          if (e.lengthComputable) {
+            setProgress(Math.round((e.loaded / e.total) * 100));
+          }
+        });
+
+        xhr.addEventListener("load", () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve();
+          } else {
+            reject(new Error(`Upload falhou com status ${xhr.status}`));
+          }
+        });
+
+        xhr.addEventListener("error", () => reject(new Error("Erro de rede durante o upload.")));
+        xhr.addEventListener("abort", () => reject(new Error("Upload cancelado.")));
+
+        xhr.open("PUT", presignedUrl);
+        xhr.setRequestHeader("Content-Type", "video/mp4");
+        xhr.send(videoFile.file);
+      });
+
+      setState("success");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro desconhecido durante o upload.");
+      setState("error");
     }
-    setState("success");
+  };
+
+  const cancelUpload = () => {
+    xhrRef.current?.abort();
+    setState("idle");
+    setProgress(0);
   };
 
   const reset = () => {
@@ -260,9 +308,18 @@ const UploadPage = () => {
                     <div className="flex items-center justify-between text-xs text-muted-foreground">
                       <span className="flex items-center gap-1.5">
                         <Loader2 className="w-3 h-3 animate-spin text-primary" />
-                        Enviando...
+                        Enviando para o servidor...
                       </span>
-                      <span className="font-mono text-primary">{progress}%</span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-primary">{progress}%</span>
+                        <button
+                          onClick={cancelUpload}
+                          className="text-destructive/60 hover:text-destructive transition-colors"
+                          title="Cancelar upload"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
                     </div>
                     <div className="h-1.5 rounded-full bg-secondary overflow-hidden">
                       <div
