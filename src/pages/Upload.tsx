@@ -80,20 +80,7 @@ const UploadPage = () => {
     setProgress(0);
 
     try {
-      // 1. Obtém presigned URL do MinIO
-      const urlRes = await fetch("/api/upload-url", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      });
-
-      if (!urlRes.ok) {
-        const body = await urlRes.json().catch(() => ({}));
-        throw new Error(body.error || "Erro ao obter URL de upload.");
-      }
-
-      const { url: presignedUrl } = await urlRes.json();
-
-      // 2. Faz upload direto para o MinIO via XHR (para acompanhar progresso)
+      // Upload via proxy da Cloudflare Function (sem CORS)
       await new Promise<void>((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         xhrRef.current = xhr;
@@ -108,14 +95,19 @@ const UploadPage = () => {
           if (xhr.status >= 200 && xhr.status < 300) {
             resolve();
           } else {
-            reject(new Error(`Upload falhou com status ${xhr.status}`));
+            try {
+              const res = JSON.parse(xhr.responseText);
+              reject(new Error(res.error || `Upload falhou com status ${xhr.status}`));
+            } catch {
+              reject(new Error(`Upload falhou com status ${xhr.status}`));
+            }
           }
         });
 
         xhr.addEventListener("error", () => reject(new Error("Erro de rede durante o upload.")));
         xhr.addEventListener("abort", () => reject(new Error("Upload cancelado.")));
 
-        xhr.open("PUT", presignedUrl);
+        xhr.open("PUT", "/api/upload");
         xhr.setRequestHeader("Content-Type", "video/mp4");
         xhr.send(videoFile.file);
       });
