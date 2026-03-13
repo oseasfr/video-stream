@@ -101,7 +101,7 @@ export const onRequestOptions: PagesFunction = async () => {
   return new Response(null, { status: 204, headers: CORS_HEADERS });
 };
 
-export const onRequestPut: PagesFunction<Env> = async ({ request, env }) => {
+export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
   if (!env.MINIO_ACCESS_KEY || !env.MINIO_SECRET_KEY) {
     return new Response(
       JSON.stringify({ error: "Credenciais do MinIO não configuradas." }),
