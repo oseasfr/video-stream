@@ -42,7 +42,6 @@ const UploadPage = () => {
       return;
     }
 
-    // libera preview antigo para evitar vazamento
     setVideoFile((prev) => {
       if (prev?.preview) URL.revokeObjectURL(prev.preview);
       return { file, preview: URL.createObjectURL(file), size: formatBytes(file.size) };
@@ -64,12 +63,12 @@ const UploadPage = () => {
     setAuthError("");
   };
 
-  const uploadWithProgress = (file: File, passwordValue: string) => {
+  const uploadWithProgress = (file: File, signedUrl: string) => {
     return new Promise<void>((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhrRef.current = xhr;
 
-      xhr.open("POST", UPLOAD_URL);
+      xhr.open("PUT", signedUrl);
 
       xhr.upload.onprogress = (event) => {
         if (event.lengthComputable) {
@@ -85,21 +84,14 @@ const UploadPage = () => {
           return;
         }
 
-        try {
-          const payload = JSON.parse(xhr.responseText) as { error?: string };
-          reject(new Error(payload.error || `Upload falhou com status ${xhr.status}`));
-        } catch {
-          reject(new Error(`Upload falhou com status ${xhr.status}`));
-        }
+        reject(new Error(`Upload falhou com status ${xhr.status}`));
       };
 
       xhr.onerror = () => reject(new Error("Falha de rede ao enviar o arquivo."));
       xhr.onabort = () => reject(new Error("Upload cancelado."));
 
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("password", passwordValue);
-      xhr.send(formData);
+      xhr.setRequestHeader("Content-Type", file.type || "video/mp4");
+      xhr.send(file);
     });
   };
 
@@ -124,10 +116,28 @@ const UploadPage = () => {
         return;
       }
 
+      const uploadUrlResponse = await fetch(UPLOAD_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+
+      if (!uploadUrlResponse.ok) {
+        const payload = await uploadUrlResponse.json().catch(() => null) as { error?: string } | null;
+        setAuthError(payload?.error || "Não foi possível preparar o upload.");
+        return;
+      }
+
+      const payload = (await uploadUrlResponse.json()) as { uploadUrl?: string };
+      if (!payload.uploadUrl) {
+        setAuthError("URL de upload inválida.");
+        return;
+      }
+
       setState("uploading");
       setProgress(0);
 
-      await uploadWithProgress(videoFile.file, password);
+      await uploadWithProgress(videoFile.file, payload.uploadUrl);
       setState("success");
     } catch (err) {
       const message = err instanceof Error ? err.message : "Erro inesperado no upload.";
@@ -335,7 +345,7 @@ const UploadPage = () => {
                     <div className="flex items-center justify-between text-xs text-muted-foreground">
                       <span className="flex items-center gap-1.5">
                         <Loader2 className="w-3 h-3 animate-spin text-primary" />
-                        Enviando para o servidor...
+                        Enviando para o storage...
                       </span>
                       <div className="flex items-center gap-2">
                         <span className="font-mono text-primary">{progress}%</span>
@@ -355,6 +365,15 @@ const UploadPage = () => {
                       />
                     </div>
                   </div>
+                )}
+
+                {state === "error" && (
+                  <button
+                    onClick={() => setState("confirm")}
+                    className="mt-3 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    Tentar novamente
+                  </button>
                 )}
               </div>
             </div>
