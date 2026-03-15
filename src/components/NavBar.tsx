@@ -14,14 +14,12 @@ const NavBar = () => {
       <div className="mx-auto max-w-7xl px-6 h-14 flex items-center justify-between">
         <Link to="/" className="flex items-center gap-2.5 group select-none">
           <img
-            src="https://core.opendata.center/assets/logo-white-Dn9-pPgP.png"
+            src="https://www.cafecomcyber.com.br/lovable-uploads/icone-home.png"
             alt="OPEN"
             className="w-6 h-6 object-contain opacity-90 group-hover:opacity-100 transition-opacity"
             onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
           />
-          <span className="font-black text-sm tracking-wide text-foreground">Steam | Café com Cyber</span>
-          <span className="text-xs tracking-[0.2em] text-muted-foreground font-semibold uppercase hidden sm:block">
-          </span>
+          <span className="font-black text-sm tracking-wide text-foreground">Stream | Café com Cyber</span>
         </Link>
 
         <nav className="flex items-center gap-1">
